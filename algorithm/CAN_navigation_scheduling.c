@@ -18,7 +18,7 @@ void CAN_NAVIGATION_init(void)
 /**
  * @brief Handle new (incoming) gps position
  *
- * @param[in]  voltage             Incoming gps position
+ * @param[in]  gpsPos             Incoming gps position
  */
 void CAN_NAVIGATION_addGpsData(const uint64_t gpsPos)
 {

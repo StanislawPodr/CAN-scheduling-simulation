@@ -60,3 +60,4 @@ __pycache__/
 *.pyc
 analysis/figures/
 analysis/*.log
+docs/

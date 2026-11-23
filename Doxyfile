@@ -1,0 +1,35 @@
+# Doxygen configuration for CAN-scheduling-simulation
+# Run from the repository root:  doxygen Doxyfile
+# Output: docs/html/index.html
+
+PROJECT_NAME           = "CAN scheduling simulation"
+PROJECT_BRIEF          = "Simulation of scheduling different messages on a CAN bus"
+OUTPUT_DIRECTORY       = docs
+OUTPUT_LANGUAGE        = English
+
+# Input files
+INPUT                  = README.md \
+                         algorithm \
+                         simulation \
+                         analysis/analyze_can_log.py
+USE_MDFILE_AS_MAINPAGE = README.md
+FILE_PATTERNS          = *.c *.h *.py *.md
+RECURSIVE              = YES
+EXCLUDE                = builddir docs analysis/.venv analysis/figures
+EXCLUDE_PATTERNS       = */builddir/* */.venv/*
+
+# What to document
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = YES
+EXTRACT_PRIVATE        = YES
+JAVADOC_AUTOBRIEF      = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_IF_DOC_ERROR      = NO
+
+# Output formats
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+GENERATE_LATEX         = NO
+SOURCE_BROWSER         = YES
+HAVE_DOT               = NO
+QUIET                  = YES

@@ -48,3 +48,13 @@ The analyser can also build and run the simulator itself:
 ```
 
 Add `--sim-ms 1000` for a shorter run.
+
+## Generate documentation
+
+Install Doxygen (`sudo apt install doxygen`) and run from the repository root:
+
+```sh
+doxygen Doxyfile
+```
+
+Open `docs/html/index.html` in a browser.

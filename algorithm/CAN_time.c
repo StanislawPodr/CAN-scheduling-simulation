@@ -111,8 +111,8 @@ double CAN_calculateFrameDurationMs(const u8 *data_p, const uint16_t canId, cons
 /**
  * @brief Calculate CAN CRC seq
  *
- * @param[in]  bit              Next bit used for CRC calculation
- * @param[out]  crc_p           Pointer to current counted CRC
+ * @param[in]  nextBit          Next bit used for CRC calculation
+ * @param[out] crc_p            Pointer to current counted CRC
  *
  */
 static inline void calculateCrcNextBit(const u8 nextBit, uint16_t *crc_p)

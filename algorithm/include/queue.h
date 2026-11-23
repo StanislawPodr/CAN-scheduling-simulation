@@ -70,7 +70,6 @@ static inline void push(Queue_s *queue_p, const void *element_p)
     if (isFull(queue_p))
     {
         fprintf(stderr, "Queue overflow\n");
-        assert(!isFull(queue_p));
         exit(1);
     }
 
