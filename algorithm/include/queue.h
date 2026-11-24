@@ -93,3 +93,17 @@ static inline void peek(Queue_s *queue_p, void *dest_p)
 
     memcpy(dest_p, start_p, queue_p->elementSize);
 }
+
+static inline void removeTop(Queue_s *queue_p)
+{
+    const u8 startIdx = queue_p->start;
+
+    if (isEmpty(queue_p))
+    {
+        fprintf(stderr, "Not enough data in queue!\n");
+        exit(1);
+    }
+
+    queue_p->start = (startIdx + queue_p->elementSize) % QUEUE_DATA_SIZE_IN_BYTES;
+    queue_p->size--;
+}

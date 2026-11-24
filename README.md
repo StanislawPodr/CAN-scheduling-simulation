@@ -22,7 +22,7 @@ From the repository root:
 ```sh
 meson setup builddir
 meson compile -C builddir
-./builddir/simulation > result.txt
+./builddir/can-simulation > result.txt
 ```
 
 A full run takes about 30 seconds and writes one line per transmitted frame

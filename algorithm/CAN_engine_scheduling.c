@@ -1,15 +1,18 @@
-#include "queue.h"
-#include "CAN_time.h"
 #include "CAN_driver.h"
+#include "CAN_time.h"
+#include "queue.h"
+
+#define MAX_NO_PRESSURE_DATA_IN_FRAME (CAN_MAX_DATA_SIZE / CAN_ENGINE_PRESSURE_SIZE)
+#define MAX_NO_TEMPERATURE_DATA_IN_FRAME (CAN_MAX_DATA_SIZE / CAN_ENGINE_TEMPERATURE_SIZE)
 
 static Queue_s temperatureQ;
 static Queue_s temperatureTimeQ;
 static Queue_s pressureQ;
 static Queue_s pressureTimeQ;
 
-static u8 txQueueSize = 0;
-
 static void fillTxQueue(void);
+static void addPressToTxQueue(void);
+static void addTempToTxQueue(void);
 
 /**
  * @brief Init Engine data CAN scheduling
@@ -31,7 +34,7 @@ void CAN_ENGINE_addTemperatureData(const _Float32 temperature)
 {
     push(&temperatureQ, &temperature);
     typeof(getTime()) time = getTime();
-    //push(&temperatureTimeQ, &time);
+    push(&temperatureTimeQ, &time);
     fillTxQueue();
 }
 
@@ -44,7 +47,7 @@ void CAN_ENGINE_addPressureData(const _Float32 pressure)
 {
     push(&pressureQ, &pressure);
     typeof(getTime()) time = getTime();
-    //push(&pressureTimeQ, &time);
+    push(&pressureTimeQ, &time);
     fillTxQueue();
 }
 
@@ -53,28 +56,97 @@ void CAN_ENGINE_addPressureData(const _Float32 pressure)
  */
 void CAN_ENGINE_handleTxQueueEmpty(void)
 {
-    txQueueSize = 0;
     fillTxQueue();
 }
 
 /**
- * @brief Fill Tx queue with data from voltageQ
+ * @brief Fill Tx queue with data from pressure and temperature
  */
 static void fillTxQueue(void)
 {
-    while (temperatureQ.size > 0 && txQueueSize < CAN_TX_BUFF_SIZE)
+
+    u8 txQueueSize = CAN_getTxQueueSize(CAN_ENGINE);
+    while (txQueueSize < CAN_TX_BUFF_SIZE && (temperatureQ.size > 0 || pressureQ.size > 0))
     {
-        u8 buff[CAN_ENGINE_TEMPERATURE_SIZE];
-        pop(&temperatureQ, &buff[0]);
-        CAN_putToTxBuffer(&buff[0], temperatureQ.elementSize, CAN_ID_ENGINE_TEMPERATURE);
+        if (temperatureQ.size > 0 && pressureQ.size > 0)
+        {
+            // Decide which next based on estimated delivery time
+
+            double currTime = getTime();
+            double timeTemp;
+            double timePress;
+
+            peek(&temperatureTimeQ, &timeTemp);
+            peek(&pressureTimeQ, &timePress);
+
+            double timeLeftTemp = CAN_ENGINE_TEMP_TIME_CONSTRAINT_MS + timeTemp - currTime;
+            double timeLeftPress = CAN_ENGINE_PRESS_TIME_CONSTRAINT_MS + timePress - currTime;
+
+            if (timeLeftTemp < timeLeftPress)
+            {
+                addTempToTxQueue();
+            }
+            else
+            {
+                addPressToTxQueue();
+            }
+        }
+        else if (temperatureQ.size > 0)
+        {
+            addTempToTxQueue();
+        }
+        else // pressureQ.size > 0
+        {
+            addPressToTxQueue();
+        }
         txQueueSize++;
+    }
+}
+
+/**
+ * @brief Send one message to tx buffer. The message can possibly have
+ *   up to MAX_NO_TEMPERATURE_DATA_IN_FRAME temperatures
+ */
+static void addTempToTxQueue(void)
+{
+    // We can merge more than one information in one message (by this we save up some bus time)
+
+    u8 tempToPutToFrame =
+        temperatureQ.size > MAX_NO_TEMPERATURE_DATA_IN_FRAME ? MAX_NO_TEMPERATURE_DATA_IN_FRAME : temperatureQ.size;
+
+    u8 mergedTempBuff[CAN_MAX_DATA_SIZE];
+    for (u8 tempIdx = 0; tempIdx < tempToPutToFrame; tempIdx++)
+    {
+        u8 tempInfo[CAN_ENGINE_TEMPERATURE_SIZE];
+        pop(&temperatureQ, &tempInfo[0]);
+        removeTop(&temperatureTimeQ);
+
+        memcpy(&mergedTempBuff[CAN_ENGINE_TEMPERATURE_SIZE * tempIdx], &tempInfo[0], sizeof(tempInfo));
     }
 
-    while (pressureQ.size > 0 && txQueueSize < CAN_TX_BUFF_SIZE)
+    CAN_putToTxBuffer(&mergedTempBuff[0], tempToPutToFrame * CAN_ENGINE_TEMPERATURE_SIZE, CAN_ID_ENGINE_TEMPERATURE);
+}
+
+/**
+ * @brief Send one message to tx buffer. The message can possibly have
+ *   up to MAX_NO_PRESSURE_DATA_IN_FRAME pressures
+ */
+static void addPressToTxQueue(void)
+{
+    // We can merge more than one information in one message (by this we save up some bus time)
+
+    u8 pressToPutToFrame =
+        pressureQ.size > MAX_NO_PRESSURE_DATA_IN_FRAME ? MAX_NO_PRESSURE_DATA_IN_FRAME : pressureQ.size;
+
+    u8 mergedPressBuff[CAN_MAX_DATA_SIZE];
+    for (u8 pressIdx = 0; pressIdx < pressToPutToFrame; pressIdx++)
     {
-        u8 buff[CAN_ENGINE_PRESSURE_SIZE];
-        pop(&pressureQ, &buff[0]);
-        CAN_putToTxBuffer(&buff[0], pressureQ.elementSize, CAN_ID_ENGINE_PRESSURE);
-        txQueueSize++;
+        u8 pressInfo[CAN_ENGINE_PRESSURE_SIZE];
+        pop(&pressureQ, &pressInfo[0]);
+        removeTop(&pressureTimeQ);
+
+        memcpy(&mergedPressBuff[CAN_ENGINE_PRESSURE_SIZE * pressIdx], &pressInfo[0], sizeof(pressInfo));
     }
+
+    CAN_putToTxBuffer(&mergedPressBuff[0], pressToPutToFrame * CAN_ENGINE_PRESSURE_SIZE, CAN_ID_ENGINE_PRESSURE);
 }

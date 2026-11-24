@@ -24,6 +24,8 @@
 #define CAN_DIAG_SYS_STAT_FREQ_MS 500
 #define CAN_DIAG_SYS_STAT_FREQ_SYS ((uint32_t)(CAN_DIAG_SYS_STAT_FREQ_MS / SMALLEST_TIME_UNIT_IN_MS))
 
+#define MAX_ELEMENTS_IN_ONE_CAN_FRAME (CAN_MAX_DATA_SIZE)
+
 void CAN_ENGINE_init(void);
 void CAN_ENGINE_addTemperatureData(const _Float32 temperature);
 void CAN_ENGINE_addPressureData(const _Float32 pressure);
@@ -54,7 +56,8 @@ typedef struct SentFrame_s
     CanSenders_e sender;
     uint16_t canId;
     uint32_t busBusyTill;
-    uint32_t messageLateTime; // For measuring if message is late. 0 if time is OK.
+    u8 noElementsInFrame;
+    uint32_t messageLateTime[MAX_ELEMENTS_IN_ONE_CAN_FRAME]; // For measuring if message is late. 0 if time is OK.
 } SentFrame_s;
 
 // Sim time is measured in smallest data unit (time needed to send one bit)
@@ -136,6 +139,7 @@ void SIMULATION_iteration(void)
          * any value would be fine
          */
         _Float32 engineTemp = ((_Float32)rand() / (_Float32)(RAND_MAX)) * 5000;
+        push(&engineTempToEngineHandlerTsQ, &simTime);
         CAN_ENGINE_addTemperatureData(engineTemp);
     }
 
@@ -146,6 +150,7 @@ void SIMULATION_iteration(void)
          * any value would be fine
          */
         _Float32 enginePressure = ((_Float32)rand() / (_Float32)(RAND_MAX)) * 300;
+        push(&enginePressToEngineHandlerTsQ, &simTime);
         CAN_ENGINE_addPressureData(enginePressure);
     }
 
@@ -168,6 +173,7 @@ void SIMULATION_iteration(void)
         uint64_t rand1 = rand();
         uint64_t rand2 = rand();
         uint64_t gpsPos = rand1 ^ (rand2 << 32);
+        push(&navGpsPosToNavHandlerTsQ, &simTime);
         CAN_NAVIGATION_addGpsData(gpsPos);
     }
 
@@ -195,18 +201,29 @@ void SIMULATION_iteration(void)
             uint16_t canId = sendElement.canId;
             uint32_t recvTime;
             int64_t messageDelayTime = 0;
+            // Sometimes one frame can have multiple elements
             if (canId == CAN_ID_ENGINE_TEMPERATURE)
             {
-                pop(&engineTempToEngineHandlerTsQ, &recvTime);
-                messageDelayTime = (int64_t)busBusyTill - (int64_t)recvTime - CAN_ENGINE_TEMP_TIME_CONSTRAINT_SYS;
+                u8 messageDataCnt = sendElement.size / CAN_ENGINE_TEMPERATURE_SIZE;
+                for (u8 dataIdx = 0; dataIdx < messageDataCnt; dataIdx++)
+                {
+                    pop(&engineTempToEngineHandlerTsQ, &recvTime);
+                    messageDelayTime = (int64_t)busBusyTill - (int64_t)recvTime - CAN_ENGINE_TEMP_TIME_CONSTRAINT_SYS;
+                    messageOnBus.messageLateTime[dataIdx] = messageDelayTime > 0 ? messageDelayTime : 0;
+                }
+                messageOnBus.noElementsInFrame = messageDataCnt;
             }
             else if (canId == CAN_ID_ENGINE_PRESSURE)
             {
-                pop(&enginePressToEngineHandlerTsQ, &recvTime);
-                messageDelayTime = (int64_t)busBusyTill - (int64_t)recvTime - CAN_ENGINE_PRESS_TIME_CONSTRAINT_SYS;
+                u8 messageDataCnt = sendElement.size / CAN_ENGINE_PRESSURE_SIZE;
+                for (u8 dataIdx = 0; dataIdx < messageDataCnt; dataIdx++)
+                {
+                    pop(&enginePressToEngineHandlerTsQ, &recvTime);
+                    messageDelayTime = (int64_t)busBusyTill - (int64_t)recvTime - CAN_ENGINE_PRESS_TIME_CONSTRAINT_SYS;
+                    messageOnBus.messageLateTime[dataIdx] = messageDelayTime > 0 ? messageDelayTime : 0;
+                }
+                messageOnBus.noElementsInFrame = messageDataCnt;
             }
-            messageDelayTime = messageDelayTime > 0 ? messageDelayTime : 0;
-            messageOnBus.messageLateTime = messageDelayTime;
             messageOnBus.busBusyTill = busBusyTill;
             messageOnBus.canId = canId;
             messageOnBus.sender = CAN_ENGINE;
@@ -218,7 +235,8 @@ void SIMULATION_iteration(void)
 
             messageOnBus.busBusyTill = simTime + frameSize;
             messageOnBus.canId = sendElement.canId;
-            messageOnBus.messageLateTime = 0;
+            messageOnBus.noElementsInFrame = 1;
+            messageOnBus.messageLateTime[0] = 0;
             messageOnBus.sender = CAN_POWER;
         }
         else if (txBufferNavQ.size > 0)
@@ -236,10 +254,11 @@ void SIMULATION_iteration(void)
                 messageDelayTime = (int64_t)busBusyTill - (int64_t)recvTime - CAN_NAV_GPS_POS_TIME_CONSTRAINT_SYS;
             }
             messageDelayTime = messageDelayTime > 0 ? messageDelayTime : 0;
-            messageOnBus.messageLateTime = messageDelayTime;
+            messageOnBus.messageLateTime[0] = messageDelayTime;
             messageOnBus.busBusyTill = busBusyTill;
             messageOnBus.canId = canId;
             messageOnBus.sender = CAN_NAVIGATION;
+            messageOnBus.noElementsInFrame = 1;
         }
         else if (txBufferDiagQ.size > 0)
         {
@@ -248,23 +267,27 @@ void SIMULATION_iteration(void)
 
             messageOnBus.busBusyTill = simTime + frameSize;
             messageOnBus.canId = sendElement.canId;
-            messageOnBus.messageLateTime = 0;
+            messageOnBus.messageLateTime[0] = 0;
             messageOnBus.sender = CAN_DIAGNOSIS;
+            messageOnBus.noElementsInFrame = 1;
         }
     }
 
     // Manage end of frame transmission
     if (messageOnBus.sender != CAN_UNKNOWN && simTime >= messageOnBus.busBusyTill)
     {
-        if (messageOnBus.messageLateTime > 0)
+        for (u8 elementIdx = 0; elementIdx < messageOnBus.noElementsInFrame; elementIdx++)
         {
-            noLateMessages++;
-            printf("Late id:0x%03x,ts:%lf,timeLate:%lf\n", messageOnBus.canId, getTime(),
-                   getTimeFromSimTs(messageOnBus.messageLateTime));
-        }
-        else
-        {
-            printf("Delivered id:0x%03x,ts:%lf\n", messageOnBus.canId, getTime());
+            if (messageOnBus.messageLateTime[elementIdx] > 0)
+            {
+                noLateMessages++;
+                printf("Late id:0x%03x,ts:%lf,timeLate:%lf\n", messageOnBus.canId, getTime(),
+                       getTimeFromSimTs(messageOnBus.messageLateTime[elementIdx]));
+            }
+            else
+            {
+                printf("Delivered id:0x%03x,ts:%lf\n", messageOnBus.canId, getTime());
+            }
         }
 
         switch (messageOnBus.sender)
@@ -302,6 +325,7 @@ void SIMULATION_iteration(void)
         memset(&messageOnBus, 0, sizeof(messageOnBus));
         messageOnBus.sender = CAN_UNKNOWN;
         messageOnBus.canId = CAN_ILLEGAL_ID;
+        messageOnBus.noElementsInFrame = 0;
     }
 
     if (simTime + (uint32_t)1 > simTime)
@@ -316,7 +340,7 @@ void SIMULATION_iteration(void)
 }
 
 /**
- * @brief Send message on CAN
+ * @brief Send message on CAN. This is just a mock function for sim purposes
  *
  * @param[in]   data_p            Pointer to sent data
  * @param[in]   size              Data size in bytes
@@ -345,18 +369,15 @@ void CAN_putToTxBuffer(const u8 *const data_p, const u8 size, const uint16_t can
     {
     case CAN_ID_ENGINE_TEMPERATURE:
         queue_p = &txBufferEngineQ;
-        push(&engineTempToEngineHandlerTsQ, &simTime);
         break;
     case CAN_ID_ENGINE_PRESSURE:
         queue_p = &txBufferEngineQ;
-        push(&enginePressToEngineHandlerTsQ, &simTime);
         break;
     case CAN_ID_POWER_ACC_VOLTAGE:
         queue_p = &txBufferPowerQ;
         break;
     case CAN_ID_NAV_GPS_POS:
         queue_p = &txBufferNavQ;
-        push(&navGpsPosToNavHandlerTsQ, &simTime);
         break;
     case CAN_ID_DIAGNOSIS_SYSTEM_STAT:
         queue_p = &txBufferDiagQ;
@@ -374,6 +395,30 @@ void CAN_putToTxBuffer(const u8 *const data_p, const u8 size, const uint16_t can
     }
 
     push(queue_p, &element);
+}
+
+/**
+ * @brief Get tx queue current number of elements. This is just a mock function for sim
+ *
+ * @param[in]  module                    Module from which the request is sent
+ */
+u8 CAN_getTxQueueSize(CanSenders_e module)
+{
+    switch (module)
+    {
+    case CAN_ENGINE:
+        return txBufferEngineQ.size;
+    case CAN_POWER:
+        return txBufferPowerQ.size;
+    case CAN_NAVIGATION:
+        return txBufferNavQ.size;
+    case CAN_DIAGNOSIS:
+        return txBufferDiagQ.size;
+    default:
+        fprintf(stderr, "CAN_getTxQueueSize, module doesn't exist\n");
+        exit(1);
+        break;
+    }
 }
 
 int main(void)

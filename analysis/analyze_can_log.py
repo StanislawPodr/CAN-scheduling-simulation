@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Analyse the CAN scheduling simulator log.
 
-Expected input protocol (stdout of ``./builddir/simulation``), one frame per line::
+Expected input protocol (stdout of ``./builddir/can-simulation``), one frame per line::
 
     Delivered id:0x010,ts:10.162000
     Late id:0x010,ts:...,timeLate:0.420000
@@ -192,7 +192,7 @@ def ensure_simulator(builddir: Path) -> Path:
         subprocess.run(["meson", "setup", str(builddir)], cwd=REPO_ROOT, check=True)
     subprocess.run(["meson", "compile", "-C", str(builddir)], cwd=REPO_ROOT, check=True)
 
-    binary = builddir / "simulation"
+    binary = builddir / "can-simulation"
     if not binary.is_file():
         raise RuntimeError(f"simulator binary not found: {binary}")
     return binary
